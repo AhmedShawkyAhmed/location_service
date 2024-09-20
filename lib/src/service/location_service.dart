@@ -4,6 +4,7 @@ import 'package:core_utils/core_utils.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:location_service/src/configs/location_service_config.dart';
 import 'package:location_service/src/models/global_latlng.dart';
+import 'package:permission_service/permission_service.dart';
 class LocationService {
   static final LocationService _instance = LocationService._internal();
 

@@ -15,6 +15,9 @@ dependencies:
   core_utils:
     git:
       url: https://github.com/AhmedShawkyAhmed/core_utils.git
+  permission_service:
+    git:
+      url: https://github.com/AhmedShawkyAhmed/permission_service.git
 
 
 dev_dependencies:
