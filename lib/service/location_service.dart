@@ -1,0 +1,198 @@
+import 'dart:async';
+import 'dart:math' show cos, sqrt, asin;
+import 'package:geolocator/geolocator.dart';
+import 'package:location_service/configs/location_service_config.dart';
+import 'package:location_service/models/global_latlng.dart';
+import 'package:location_service/service/permission_service.dart';
+
+/// LocationService.init(
+/// config: myLocationConfig,
+/// logFunction: AppLogs.debugLog,
+/// throttleFunction: Throttle.run,
+/// );
+
+
+class LocationService {
+  static final LocationService _instance = LocationService._internal();
+
+  factory LocationService._internal() => _instance;
+
+  static late void Function(Object? object, {Type? runtimeType}) _logFunction;
+  static late void Function(void Function())? _throttleFunction;
+
+
+  static int _requestToOpenLocationCounter = 0;
+
+  static Future<bool> get isLocationPermissionGranted async {
+    var permission = await Geolocator.checkPermission();
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
+  }
+
+  static Future<bool> get isLocationServiceOpen async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    return serviceEnabled;
+  }
+
+  static GlobalLatLng? get myLocation {
+    return myPosition == null
+        ? null
+        : GlobalLatLng(myPosition!.latitude, myPosition!.longitude);
+  }
+
+  static Position? _myPosition;
+
+  static Position? get myPosition => _myPosition;
+
+  static bool _requireRefresh(bool isTriggered) {
+    if (myPosition == null) return true;
+    return (isTriggered &&
+            DateTime.now().difference(myPosition!.timestamp) >
+                _config.triggerDelayedRefreshDuration) ||
+        (_config.enablePeriodicRefresh &&
+            DateTime.now().difference(myPosition!.timestamp) >
+                _config.periodicRefreshDuration);
+  }
+
+  static bool _isGettingLocation = false;
+  static late final LocationServiceConfig _config;
+
+  static Future<void> init({
+    required LocationServiceConfig config,
+    required void Function(Object? object, {Type? runtimeType}) logFunction,
+    void Function(void Function())? throttleFunction,
+  }) async {
+    _config = config;
+    _logFunction = logFunction;
+    _throttleFunction = throttleFunction;
+
+    try {
+      var hasPermission = await handlePermission();
+      if (hasPermission) {
+        _isGettingLocation = true;
+        _myPosition = await Geolocator.getCurrentPosition();
+        _isGettingLocation = false;
+      }
+    } catch (e) {
+      _config.onError(e, false, false);
+      _isGettingLocation = false;
+    }
+    _logFunction("Initial: $_myPosition", runtimeType: _instance.runtimeType);
+    if (config.enablePeriodicRefresh) {
+      Timer.periodic(
+        config.periodicRefreshDuration,
+        (timer) async {
+          if (_requireRefresh(false)) {
+            await _delayedRefresh();
+          }
+        },
+      );
+    }
+  }
+
+  static Future<bool> handlePermission() {
+    return PermissionService.checkPermission([Permission.locationWhenInUse]);
+  }
+
+  static Future<Position?> _delayedRefresh({bool isTriggered = false}) async {
+    try {
+      if ((_config.customDelayedRefreshCondition?.call() ?? true) &&
+          !_isGettingLocation &&
+          _requireRefresh(isTriggered) &&
+          await handlePermission()) {
+        if (!await isLocationServiceOpen &&
+            _requestToOpenLocationCounter <
+                _config.requestToOpenLocationCount) {
+          _requestToOpenLocationCounter++;
+        } else {
+          throw const LocationServiceDisabledException();
+        }
+
+        _isGettingLocation = true;
+        _myPosition = await Geolocator.getCurrentPosition();
+        _isGettingLocation = false;
+
+        _logFunction(
+          "delayedRefresh(isTriggered = $isTriggered): $_myPosition",
+          runtimeType: _instance.runtimeType,
+        );
+      }
+    } catch (e) {
+      _config.onError(e, isTriggered, false);
+      _isGettingLocation = false;
+      return null;
+    }
+    return _myPosition;
+  }
+
+  static Future<Position?> triggerDelayedRefresh() async {
+    return await _delayedRefresh(isTriggered: true);
+  }
+
+  static Future<Position?> getMyLocation() async {
+    try {
+      var hasPermission = await handlePermission();
+      if (!hasPermission) {
+        _config.onError(null, false, true);
+        return null;
+      }
+      if (!_isGettingLocation) {
+        _isGettingLocation = true;
+        _myPosition = await Geolocator.getCurrentPosition();
+        _isGettingLocation = false;
+      }
+      while (_isGettingLocation) {
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+      _logFunction("Instant Refresh: $_myPosition",
+          runtimeType: _instance.runtimeType);
+    } catch (e) {
+      _config.onError(e, false, false);
+      _isGettingLocation = false;
+      return null;
+    }
+    return _myPosition;
+  }
+
+  static String calculateDistance({
+    required GlobalLatLng fromLocation,
+    required GlobalLatLng toLocation,
+  }) {
+    var p = 0.017453292519943295;
+    var c = cos;
+    var a = 0.5 -
+        c((toLocation.latitude - fromLocation.latitude) * p) / 2 +
+        c(fromLocation.latitude * p) *
+            c(toLocation.latitude * p) *
+            (1 - c((toLocation.longitude - fromLocation.longitude) * p)) /
+            2;
+    return (12742 * asin(sqrt(a))).toStringAsFixed(2);
+  }
+
+  static late Stream<Position> _positionStream;
+
+  static Future<void> myLocationStream({
+    required GlobalLatLng myLocation,
+    required Function(GlobalLatLng) newLocation,
+  }) async {
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 50,
+      ),
+    );
+
+    _positionStream.listen((Position position) {
+      if (position.latitude.toStringAsFixed(2) !=
+              myLocation.latitude.toStringAsFixed(2) ||
+          position.longitude.toStringAsFixed(2) !=
+              myLocation.longitude.toStringAsFixed(2)) {
+        _logFunction(
+            'New location: ${position.latitude.toStringAsFixed(2)}, ${position.longitude.toStringAsFixed(2)}');
+        _throttleFunction!(() {
+          newLocation(GlobalLatLng(position.latitude, position.longitude));
+        });
+      }
+    });
+  }
+}
