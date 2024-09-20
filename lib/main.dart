@@ -1,5 +1,5 @@
 library location_service;
 
-export 'service/location_service.dart';
-export 'configs/location_service_config.dart';
-export 'models/global_latlng.dart';
+export 'src/service/location_service.dart';
+export 'src/configs/location_service_config.dart';
+export 'src/models/global_latlng.dart';
