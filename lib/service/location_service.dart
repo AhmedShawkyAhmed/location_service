@@ -1,25 +1,15 @@
 import 'dart:async';
 import 'dart:math' show cos, sqrt, asin;
+import 'package:core_utils/core_utils.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:location_service/configs/location_service_config.dart';
 import 'package:location_service/models/global_latlng.dart';
-import 'package:location_service/service/permission_service.dart';
-
-/// LocationService.init(
-/// config: myLocationConfig,
-/// logFunction: AppLogs.debugLog,
-/// throttleFunction: Throttle.run,
-/// );
-
-
 class LocationService {
   static final LocationService _instance = LocationService._internal();
 
-  factory LocationService._internal() => _instance;
+  factory LocationService() => _instance;
 
-  static late void Function(Object? object, {Type? runtimeType}) _logFunction;
-  static late void Function(void Function())? _throttleFunction;
-
+  LocationService._internal();
 
   static int _requestToOpenLocationCounter = 0;
 
@@ -47,26 +37,22 @@ class LocationService {
   static bool _requireRefresh(bool isTriggered) {
     if (myPosition == null) return true;
     return (isTriggered &&
-            DateTime.now().difference(myPosition!.timestamp) >
-                _config.triggerDelayedRefreshDuration) ||
+        DateTime.now().difference(myPosition!.timestamp) >
+            _config.triggerDelayedRefreshDuration) ||
         (_config.enablePeriodicRefresh &&
             DateTime.now().difference(myPosition!.timestamp) >
                 _config.periodicRefreshDuration);
   }
 
+  // ignore: unused_field
+  static late Timer _delayedRefreshTimer;
+
   static bool _isGettingLocation = false;
   static late final LocationServiceConfig _config;
 
-  static Future<void> init({
-    required LocationServiceConfig config,
-    required void Function(Object? object, {Type? runtimeType}) logFunction,
-    void Function(void Function())? throttleFunction,
-  }) async {
-    _config = config;
-    _logFunction = logFunction;
-    _throttleFunction = throttleFunction;
-
+  static Future<void> init({required LocationServiceConfig config}) async {
     try {
+      _config = config;
       var hasPermission = await handlePermission();
       if (hasPermission) {
         _isGettingLocation = true;
@@ -77,11 +63,12 @@ class LocationService {
       _config.onError(e, false, false);
       _isGettingLocation = false;
     }
-    _logFunction("Initial: $_myPosition", runtimeType: _instance.runtimeType);
+    AppLogs.debugLog("Initial: $_myPosition",
+        runtimeType: _instance.runtimeType);
     if (config.enablePeriodicRefresh) {
-      Timer.periodic(
+      _delayedRefreshTimer = Timer.periodic(
         config.periodicRefreshDuration,
-        (timer) async {
+            (timer) async {
           if (_requireRefresh(false)) {
             await _delayedRefresh();
           }
@@ -107,15 +94,12 @@ class LocationService {
         } else {
           throw const LocationServiceDisabledException();
         }
-
         _isGettingLocation = true;
         _myPosition = await Geolocator.getCurrentPosition();
         _isGettingLocation = false;
-
-        _logFunction(
-          "delayedRefresh(isTriggered = $isTriggered): $_myPosition",
-          runtimeType: _instance.runtimeType,
-        );
+        AppLogs.debugLog(
+            "delayedRefresh(isTriggered = $isTriggered): $_myPosition",
+            runtimeType: _instance.runtimeType);
       }
     } catch (e) {
       _config.onError(e, isTriggered, false);
@@ -144,7 +128,7 @@ class LocationService {
       while (_isGettingLocation) {
         await Future.delayed(const Duration(milliseconds: 200));
       }
-      _logFunction("Instant Refresh: $_myPosition",
+      AppLogs.successLog("Instant Refresh: $_myPosition",
           runtimeType: _instance.runtimeType);
     } catch (e) {
       _config.onError(e, false, false);
@@ -184,12 +168,12 @@ class LocationService {
 
     _positionStream.listen((Position position) {
       if (position.latitude.toStringAsFixed(2) !=
-              myLocation.latitude.toStringAsFixed(2) ||
+          myLocation.latitude.toStringAsFixed(2) ||
           position.longitude.toStringAsFixed(2) !=
               myLocation.longitude.toStringAsFixed(2)) {
-        _logFunction(
+        AppLogs.successLog(
             'New location: ${position.latitude.toStringAsFixed(2)}, ${position.longitude.toStringAsFixed(2)}');
-        _throttleFunction!(() {
+        Throttle.run(() {
           newLocation(GlobalLatLng(position.latitude, position.longitude));
         });
       }
