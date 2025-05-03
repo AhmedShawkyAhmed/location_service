@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:location_service/src/configs/location_service_config.dart';
 import 'package:location_service/src/models/global_latlng.dart';
 import 'package:permission_service/permission_service.dart';
+
 class LocationService {
   static final LocationService _instance = LocationService._internal();
 
@@ -32,7 +33,6 @@ class LocationService {
   }
 
   static Position? _myPosition;
-
   static Position? get myPosition => _myPosition;
 
   static bool _requireRefresh(bool isTriggered) {
@@ -78,8 +78,14 @@ class LocationService {
     }
   }
 
-  static Future<bool> handlePermission() {
-    return PermissionService.checkPermission([Permission.locationWhenInUse]);
+  static Future<bool> handlePermission() async {
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      var isPermissionGranted = await PermissionService.checkPermission([Permission.locationWhenInUse]);
+      return isPermissionGranted;
+    }
+    return true;
   }
 
   static Future<Position?> _delayedRefresh({bool isTriggered = false}) async {
@@ -174,7 +180,7 @@ class LocationService {
               myLocation.longitude.toStringAsFixed(2)) {
         AppLogs.successLog(
             'New location: ${position.latitude.toStringAsFixed(2)}, ${position.longitude.toStringAsFixed(2)}');
-        Throttle.run(() {
+        Throttle().run(() {
           newLocation(GlobalLatLng(position.latitude, position.longitude));
         });
       }
